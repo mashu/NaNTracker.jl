@@ -31,7 +31,7 @@ end
 # Second, we wrap model with DebugWrapper
 #
 exclude(kp::KeyPath, x::Dense) = true
-exclude(kp::KeyPath, x::Function) = false
+exclude(kp::KeyPath, x::Function) = true
 exclude(kp::KeyPath, x) = false
 
 debug_model(model) = Functors.fmap_with_path(DebugWrapper, model, exclude = exclude)
@@ -47,4 +47,12 @@ mask = permutedims(repeat((x .== 1), outer = [1, 1, 1, 1]), (1, 4, 3, 2))
 loss, grads = Flux.withgradient(enc) do m
     sum(m(x, attn_mask=mask))
 end
+
+# Alternatively if you want to save error_log.txt file
+# function testit()
+#    loss, grads = Flux.withgradient(enc) do m
+#         sum(m(x, attn_mask=mask))
+#    end
+# end
+# with_logging(testit)
 ```

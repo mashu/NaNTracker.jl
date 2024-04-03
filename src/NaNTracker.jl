@@ -31,5 +31,16 @@ module NaNTracker
         return y, pb_check
     end
 
+    function with_logging(f, args...)
+        try
+            f(args...)
+        catch e
+            open("error_log.txt", "a") do file
+                println(file, "Error occurred: ", e)
+            end
+            throw(e)
+        end
+    end
+    export with_logging
     export DebugWrapper
 end # module NaNTracker
