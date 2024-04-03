@@ -4,7 +4,8 @@
 include("NaNTracker.jl")
 using .NaNTracker
 using Flux
-using Flux.Functors: KeyPath
+using Functors
+using Functors: KeyPath, fmap_with_path
 
 #
 # First, we define a simple encoder only model
@@ -27,40 +28,24 @@ function (g::EncoderOnly)(x; attn_mask=nothing)
     return z̄
 end
 
-enc = EncoderOnly(30, 128, 64, 2, 0.1)
-
-
 #
-# Second, we wrap suspected layers (or all layers) model with NaNTracker
+# Second, we wrap model with DebugWrapper
 #
+exclude(kp::KeyPath, x::Conv) = true
+exclude(kp::KeyPath, x::Dense) = false
+exclude(kp::KeyPath, x::Function) = false
+exclude(kp::KeyPath, x) = false
 
-wrapped_embedding = DebugWrapper(KeyPath("Embedding"), enc.embedding)
-wrapped_mha = DebugWrapper(KeyPath("MultiHeadAttention"), enc.mha)
-wrapped_mha_norm = DebugWrapper(KeyPath("LayerNorm"), enc.mha_norm)
-
-# Define a wrapper for the MWE model that uses the wrapped layers
-struct WrappedMWE
-    embedding::DebugWrapper{typeof(enc.embedding)}
-    mha::DebugWrapper{typeof(enc.mha)}
-    mha_norm::DebugWrapper{typeof(enc.mha_norm)}
-end
-Flux.@layer WrappedMWE
-function (wmwe::WrappedMWE)(x; attn_mask=nothing)
-    z̄ = wmwe.embedding(x)
-    z̄, _ = wmwe.mha(z̄, z̄, z̄; mask=attn_mask) # Adjust according to MultiHeadAttention API
-    z̄ = wmwe.mha_norm(z̄) + z̄
-    return z̄
-end
-# Create a wrapped instance of your model
-wrapped_model = WrappedMWE(wrapped_embedding, wrapped_mha, wrapped_mha_norm)
+debug_model(model) = Functors.fmap_with_path(DebugWrapper, model, exclude = exclude)
+enc = debug_model(EncoderOnly(30, 128, 64, 2, 0.1))
 
 # Test the model
 x = map(f->rand(Int32.(2:10), rand(8:16)), 1:32)
-x = reduce(hcat, rpad.(x, maximum(length.(x)), 1)) #|> gpu
+x = reduce(hcat, rpad.(x, maximum(length.(x)), 1))
 # Input array broadcastable to size (kv_len, q_len, nheads, batch_size)
 mask = permutedims(repeat((x .== 1), outer = [1, 1, 1, 1]), (1, 4, 3, 2))
 
-loss, grads = Flux.withgradient(wrapped_model) do m
+loss, grads = Flux.withgradient(enc) do m
     sum(m(x, attn_mask=mask))
 end
 ```
