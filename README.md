@@ -1,8 +1,7 @@
 # Usage
 
 ```julia
-include("NaNTracker.jl")
-using .NaNTracker
+using NaNTracker
 using Flux
 using Functors
 using Functors: KeyPath, fmap_with_path
@@ -31,8 +30,7 @@ end
 #
 # Second, we wrap model with DebugWrapper
 #
-exclude(kp::KeyPath, x::Conv) = true
-exclude(kp::KeyPath, x::Dense) = false
+exclude(kp::KeyPath, x::Dense) = true
 exclude(kp::KeyPath, x::Function) = false
 exclude(kp::KeyPath, x) = false
 
@@ -45,6 +43,7 @@ x = reduce(hcat, rpad.(x, maximum(length.(x)), 1))
 # Input array broadcastable to size (kv_len, q_len, nheads, batch_size)
 mask = permutedims(repeat((x .== 1), outer = [1, 1, 1, 1]), (1, 4, 3, 2))
 
+# Compute gradients
 loss, grads = Flux.withgradient(enc) do m
     sum(m(x, attn_mask=mask))
 end

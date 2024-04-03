@@ -28,8 +28,7 @@ end
 #
 # Second, we wrap model with DebugWrapper
 #
-exclude(kp::KeyPath, x::Conv) = true
-exclude(kp::KeyPath, x::Dense) = false
+exclude(kp::KeyPath, x::Dense) = true
 exclude(kp::KeyPath, x::Function) = false
 exclude(kp::KeyPath, x) = false
 
