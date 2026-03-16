@@ -26,5 +26,3 @@ end
 # Unwrap when done debugging
 clean = nanuntrack(tracked)
 ```
-
-See the [documentation](https://mashu.github.io/NaNTracker.jl/dev/) for details on custom layers, how it works, and advanced usage.
