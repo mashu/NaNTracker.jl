@@ -5,7 +5,7 @@ using Functors: KeyPath, fmap_with_path, fmap
 using ChainRulesCore: RuleConfig, HasReverseMode, rrule_via_ad, NoTangent, Tangent
 import ChainRulesCore
 
-export nantrack, nanuntrack, trackable, NaNCheck, KeyPath
+export nantrack, nanuntrack, trackable, NaNCheck, KeyPath, @nanforward
 
 # ─── NaN detection via dispatch ───────────────────────────────────────────────
 
@@ -95,6 +95,44 @@ pass_through(::Bool) = true
 pass_through(::Nothing) = true
 pass_through(x) = false
 
+# ─── Dispatch forwarding macro ───────────────────────────────────────────────
+
+"""
+    @nanforward f
+    @nanforward f g h ...
+
+Generate forwarding methods so that `f(::NaNCheck, args...; kw...)` unwraps
+the first argument and re-dispatches to the original method.
+
+This lets existing multi-dispatch code work unchanged after `nantrack`:
+
+```julia
+# Your model's dispatch functions — unchanged:
+apply_encoder_proj(proj::Dense, h) = proj(h)
+apply_encoder_proj(::Nothing, h)   = h
+
+# One line makes them NaNCheck-transparent:
+@nanforward apply_encoder_proj
+
+# Multiple functions at once:
+@nanforward apply_encoder_proj project_memory
+```
+
+After this, when `nantrack` wraps `enc.proj::Dense` into
+`NaNCheck{..., Dense}`, calling `apply_encoder_proj(enc.proj, h)` will
+unwrap the `NaNCheck`, recover the `Dense` inside, and dispatch to
+`apply_encoder_proj(::Dense, h)` as before.
+"""
+macro nanforward(fs...)
+    blk = Expr(:block)
+    for f in fs
+        push!(blk.args,
+            :($(esc(f))(n::NaNCheck, args...; kwargs...) =
+                $(esc(f))(n.layer, args...; kwargs...)))
+    end
+    blk
+end
+
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 """
@@ -108,7 +146,7 @@ Usage: `tracked = nantrack(model)` then use `tracked` like `model`. For models
 that use non-Flux leaf layers (e.g. Onion.Linear, Onion.RMSNorm), extend
 [`trackable`](@ref) with one line per leaf type.
 
-See also [`nanuntrack`](@ref), [`trackable`](@ref).
+See also [`nanuntrack`](@ref), [`trackable`](@ref), [`@nanforward`](@ref).
 """
 function nantrack(model; exclude = trackable)
     wrap_if_trackable(kp, x) = pass_through(x) ? x : (trackable(kp, x) ? NaNCheck(kp, x) : x)
