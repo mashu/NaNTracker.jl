@@ -34,6 +34,14 @@ struct NaNCheck{P,L}
     layer::L
 end
 
+"""Forward field access (e.g. .weight, .bias) to the inner layer so Zygote/AD and other code see the real parameters."""
+function Base.getproperty(n::NaNCheck, name::Symbol)
+    if name === :path || name === :layer
+        return getfield(n, name)
+    end
+    return getproperty(getfield(n, :layer), name)
+end
+
 Flux.@layer NaNCheck
 
 function (n::NaNCheck)(args...; kwargs...)
