@@ -47,6 +47,36 @@ using Functors: KeyPath
         @test !isnothing(y)
     end
 
+    @testset "NaNCheck property forwarding" begin
+        layer = Dense(3 => 2)
+        checked = NaNCheck(KeyPath(:test), layer)
+
+        # Own fields still accessible
+        @test checked.path == KeyPath(:test)
+        @test checked.layer === layer
+
+        # Forwarded fields reach the inner layer
+        @test checked.weight === layer.weight
+        @test checked.bias === layer.bias
+        @test checked.σ === layer.σ
+    end
+
+    @testset "property forwarding with gradient" begin
+        # Simulates the Onion.StarGLU pattern: extract .weight from a
+        # NaNCheck-wrapped Dense and use it in computation under AD.
+        layer = Dense(4 => 3, bias=false)
+        checked = NaNCheck(KeyPath(:w), layer)
+        x = randn(Float32, 4, 2)
+
+        loss, grads = Flux.withgradient(checked) do m
+            # Access .weight through the NaNCheck wrapper (like StarGLU does)
+            sum(m.weight * x)
+        end
+
+        @test isfinite(loss)
+        @test !isnothing(grads)
+    end
+
     @testset "nantrack wrapping" begin
         model = Chain(Dense(4 => 8, relu), Dense(8 => 2))
         tracked = nantrack(model)
@@ -66,6 +96,26 @@ using Functors: KeyPath
         @test tracked_dropout.layers[1] isa NaNCheck
         @test tracked_dropout.layers[2] isa Flux.Dropout
         @test tracked_dropout.layers[2].dims === (:)  # Colon passed through, not wrapped
+    end
+
+    @testset "functions are not wrapped" begin
+        # Functions must not be wrapped: they have no parameters, and wrapping
+        # breaks GPU broadcasting (NaNCheck is not isbits).
+        kp = KeyPath()
+        @test trackable(kp, relu) == false
+        @test trackable(kp, swish) == false
+        @test trackable(kp, identity) == false
+
+        # Functions as Chain layers pass through unwrapped
+        model = Chain(Dense(4 => 8), relu, Dense(8 => 2))
+        tracked = nantrack(model)
+        @test tracked.layers[1] isa NaNCheck   # Dense wrapped
+        @test tracked.layers[2] === relu       # Function not wrapped
+        @test tracked.layers[3] isa NaNCheck   # Dense wrapped
+
+        x = randn(Float32, 4, 5)
+        y = tracked(x)
+        @test size(y) == (2, 5)
     end
 
     @testset "nanuntrack restores model" begin
@@ -112,9 +162,10 @@ using Functors: KeyPath
         @test trackable(kp, Dense(3 => 2)) == true
         @test trackable(kp, Flux.Embedding(10 => 8)) == true
         @test trackable(kp, Flux.LayerNorm(8)) == true
-        @test trackable(kp, relu) == true
         @test trackable(kp, Chain()) == false
         @test trackable(kp, "something") == false
+        @test trackable(kp, relu) == false
+        @test trackable(kp, identity) == false
     end
 
     @testset "custom trackable extension" begin
@@ -162,6 +213,51 @@ using Functors: KeyPath
             sum(m(x))
         end
         @test isfinite(loss)
+    end
+
+    @testset "GLU-style weight extraction pattern" begin
+        # Reproduces the Onion.StarGLU pattern: a composite struct holds
+        # Dense layers whose .weight is extracted and used directly,
+        # plus a Function field (act) that is broadcast over arrays.
+        struct FakeGLU{W,F}
+            gate::W
+            up::W
+            down::W
+            act::F
+        end
+        Flux.@layer FakeGLU
+
+        function (m::FakeGLU)(x)
+            # Extract raw weight matrices (same pattern as Onion.StarGLU)
+            g = m.gate.weight * x
+            u = m.up.weight * x
+            # Broadcast the activation (same pattern — must stay a plain Function)
+            return m.down.weight * (m.act.(g) .* u)
+        end
+
+        model = FakeGLU(
+            Dense(4 => 8, bias=false),
+            Dense(4 => 8, bias=false),
+            Dense(8 => 2, bias=false),
+            swish,
+        )
+        tracked = nantrack(model)
+
+        # act must NOT be wrapped (would break GPU isbits requirement)
+        @test tracked.act === swish
+
+        x = randn(Float32, 4, 3)
+
+        # Forward works (property forwarding + unwrapped act)
+        y = tracked(x)
+        @test size(y) == (2, 3)
+
+        # Gradients flow correctly
+        loss, grads = Flux.withgradient(tracked) do m
+            sum(m(x))
+        end
+        @test isfinite(loss)
+        @test !isnothing(grads)
     end
 
     @testset "encoder model with MultiHeadAttention" begin

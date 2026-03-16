@@ -3,8 +3,8 @@
 Lightweight NaN detection for [Flux.jl](https://github.com/FluxML/Flux.jl) models.
 
 NaNTracker wraps leaf layers to check forward inputs, forward outputs,
-gradient inputs, and gradient outputs — throwing a `DomainError` with
-the exact layer path at the first NaN.
+and incoming gradients — throwing a `DomainError` with the exact
+layer path at the first NaN.
 
 ## Installation
 

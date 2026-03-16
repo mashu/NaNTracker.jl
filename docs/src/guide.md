@@ -13,8 +13,8 @@ The wrapper does two things:
    fires, a `DomainError` is thrown with the layer's `KeyPath`.
 
 2. **Backward pass** — a custom `ChainRulesCore.rrule` intercepts
-   automatic differentiation. It checks the incoming gradient `Δ` and
-   the pullback output for NaN, throwing with the same path information.
+   automatic differentiation. It checks the incoming gradient `Δ` for
+   NaN, throwing with the same path information.
 
 Because `NaNCheck` is parametric (`NaNCheck{P,L}`), it is fully
 type-stable and works transparently on CPU and GPU arrays.
@@ -47,7 +47,7 @@ tracked = nantrack(model)  # Dense, Embedding, LayerNorm inside get wrapped
 ## Custom leaf layers
 
 By default the following are tracked: `Dense`, `Embedding`, `LayerNorm`,
-`Scale`, `Conv`, and `Function` (activations).
+`Scale`, and `Conv`.
 
 To add your own leaf layer, define a single dispatch method:
 

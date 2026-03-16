@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Lightweight NaN detection for [Flux.jl](https://github.com/FluxML/Flux.jl) models.
-Wraps leaf layers to check forward inputs, forward outputs, gradient inputs, and gradient outputs — throws a `DomainError` with the exact layer path at the first NaN.
+Wraps leaf layers to check forward inputs, forward outputs, and incoming gradients — throws a `DomainError` with the exact layer path at the first NaN.
 
 ## Quick start
 
@@ -19,6 +19,7 @@ model = Chain(Dense(10 => 20, relu), Dense(20 => 5))
 # Wrap — checks every forward and backward pass for NaN
 tracked = nantrack(model)
 
+x = randn(Float32, 10, 8)
 loss, grads = Flux.withgradient(tracked) do m
     sum(m(x))
 end
