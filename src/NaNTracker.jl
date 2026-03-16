@@ -76,9 +76,12 @@ end
     trackable(::KeyPath, layer) :: Bool
 
 Predicate that decides whether `layer` should be wrapped with [`NaNCheck`](@ref).
-Returns `true` for Flux leaf layers (`Dense`, `Embedding`, `LayerNorm`,
-`Scale`, `Conv`, `Function`) and `false` otherwise so that `fmap` recurses
-into composite layers.
+Returns `true` for Flux leaf layers with parameters (`Dense`, `Embedding`, `LayerNorm`,
+`Scale`, `Conv`) and `false` for `Function` and composite layers.
+
+Functions (e.g. activations like `swish`, `relu`) are not wrapped so they can be
+passed into GPU kernels, which require isbits types. NaNs are still caught at
+parameterized layer outputs (Dense, Conv, etc.).
 
 Extend for your own leaf layers:
 
@@ -91,7 +94,9 @@ trackable(::KeyPath, ::Flux.Embedding) = true
 trackable(::KeyPath, ::Flux.LayerNorm) = true
 trackable(::KeyPath, ::Flux.Scale) = true
 trackable(::KeyPath, ::Flux.Conv) = true
-trackable(::KeyPath, ::Function) = true
+# Do not wrap Function: activations (swish, relu, etc.) are often used in GPU broadcast;
+# NaNCheck is not isbits and would cause "passing non-bitstype argument" in kernel compilation.
+trackable(::KeyPath, ::Function) = false
 trackable(::KeyPath, x) = false
 
 # Values that appear inside layers (e.g. Dropout.dims::Colon) are passed through
