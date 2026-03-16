@@ -1,47 +1,19 @@
+# NaNTracker example: wrap a model and use it. No fmap_with_path or custom exclude.
 include("NaNTracker.jl")
 using .NaNTracker
 using Flux
-using Functors
-using Functors: KeyPath, fmap_with_path
 
-#
-# First, we define a simple encoder only model
-#
-struct EncoderOnly
-    embedding::Embedding
-    mha::MultiHeadAttention
-    mha_norm::LayerNorm
-end
-Flux.@layer EncoderOnly
-function EncoderOnly(vocab_size::Int, hidden_size::Int, head_size::Int, nheads::Int, dropout::Float64)
-    embedding = Embedding(vocab_size => hidden_size)
-    mha = MultiHeadAttention(hidden_size => head_size => hidden_size, nheads=nheads, dropout_prob=dropout)
-    mha_norm = LayerNorm(hidden_size)
-    return EncoderOnly(embedding, mha, mha_norm)
-end
-function (g::EncoderOnly)(x; attn_mask=nothing)
-    z̄ = g.embedding(x)
-    z̄ = g.mha_norm(first(g.mha(z̄, mask=attn_mask)) + z̄)
-    return z̄
-end
+# 1. Flux model: wrap and run.
+model = Chain(Dense(4 => 8, relu), Dense(8 => 2))
+tracked = nantrack(model)
+x = randn(Float32, 4, 5)
+y = tracked(x)   # same API as model(x)
 
-#
-# Second, we wrap model with DebugWrapper
-#
-exclude(kp::KeyPath, x::Dense) = true
-exclude(kp::KeyPath, x::Function) = false
-exclude(kp::KeyPath, x) = false
+# 2. Optional: for models with non-Flux leaf layers (e.g. Onion), extend trackable
+#    (KeyPath is re-exported by NaNTracker), then nantrack(model):
+#    using Onion
+#    NaNTracker.trackable(::KeyPath, ::Onion.Linear) = true
+#    NaNTracker.trackable(::KeyPath, ::Onion.RMSNorm) = true
 
-debug_model(model) = Functors.fmap_with_path(DebugWrapper, model, exclude = exclude)
-enc = debug_model(EncoderOnly(30, 128, 64, 2, 0.1))
-
-# Test the model
-x = map(f->rand(Int32.(2:10), rand(8:16)), 1:32)
-x = reduce(hcat, rpad.(x, maximum(length.(x)), 1))
-# Input array broadcastable to size (kv_len, q_len, nheads, batch_size)
-mask = permutedims(repeat((x .== 1), outer = [1, 1, 1, 1]), (1, 4, 3, 2))
-
-loss, grads = Flux.withgradient(enc) do m
-    sum(m(x, attn_mask=mask))
-end
-
+# 3. Strip wrappers to get the original back.
+restored = nanuntrack(tracked)

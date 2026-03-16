@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+NaNTracker = "4f0d6b0b-2ffb-43f5-ab98-761af06c9a4c"
+
+[compat]
+Documenter = "1"

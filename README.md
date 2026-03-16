@@ -1,58 +1,30 @@
-# Usage
+# NaNTracker.jl
+
+[![CI](https://github.com/mashu/NaNTracker.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/mashu/NaNTracker.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/mashu/NaNTracker.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/mashu/NaNTracker.jl)
+[![Documentation (stable)](https://img.shields.io/badge/docs-stable-blue.svg)](https://mashu.github.io/NaNTracker.jl/stable/)
+[![Documentation (dev)](https://img.shields.io/badge/docs-dev-blue.svg)](https://mashu.github.io/NaNTracker.jl/dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Lightweight NaN detection for [Flux.jl](https://github.com/FluxML/Flux.jl) models.
+Wraps leaf layers to check forward inputs, forward outputs, gradient inputs, and gradient outputs — throws a `DomainError` with the exact layer path at the first NaN.
+
+## Quick start
 
 ```julia
-using NaNTracker
-using Flux
-using Functors
-using Functors: KeyPath, fmap_with_path
+using NaNTracker, Flux
 
-#
-# First, we define a simple encoder only model
-#
-struct EncoderOnly
-    embedding::Embedding
-    mha::MultiHeadAttention
-    mha_norm::LayerNorm
-end
-Flux.@layer EncoderOnly
-function EncoderOnly(vocab_size::Int, hidden_size::Int, head_size::Int, nheads::Int, dropout::Float64)
-    embedding = Embedding(vocab_size => hidden_size)
-    mha = MultiHeadAttention(hidden_size => head_size => hidden_size, nheads=nheads, dropout_prob=dropout)
-    mha_norm = LayerNorm(hidden_size)
-    return EncoderOnly(embedding, mha, mha_norm)
-end
-function (g::EncoderOnly)(x; attn_mask=nothing)
-    z̄ = g.embedding(x)
-    z̄ = g.mha_norm(first(g.mha(z̄, mask=attn_mask)) + z̄)
-    return z̄
+model = Chain(Dense(10 => 20, relu), Dense(20 => 5))
+
+# Wrap — checks every forward and backward pass for NaN
+tracked = nantrack(model)
+
+loss, grads = Flux.withgradient(tracked) do m
+    sum(m(x))
 end
 
-#
-# Second, we wrap model with DebugWrapper
-#
-exclude(kp::KeyPath, x::Dense) = true
-exclude(kp::KeyPath, x::Function) = true
-exclude(kp::KeyPath, x) = false
-
-debug_model(model) = Functors.fmap_with_path(DebugWrapper, model, exclude = exclude)
-enc = debug_model(EncoderOnly(30, 128, 64, 2, 0.1))
-
-# Test the model
-x = map(f->rand(Int32.(2:10), rand(8:16)), 1:32)
-x = reduce(hcat, rpad.(x, maximum(length.(x)), 1))
-# Input array broadcastable to size (kv_len, q_len, nheads, batch_size)
-mask = permutedims(repeat((x .== 1), outer = [1, 1, 1, 1]), (1, 4, 3, 2))
-
-# Compute gradients
-loss, grads = Flux.withgradient(enc) do m
-    sum(m(x, attn_mask=mask))
-end
-
-# Alternatively if you want to save error_log.txt file
-# function testit()
-#    loss, grads = Flux.withgradient(enc) do m
-#         sum(m(x, attn_mask=mask))
-#    end
-# end
-# with_logging(testit)
+# Unwrap when done debugging
+clean = nanuntrack(tracked)
 ```
+
+See the [documentation](https://mashu.github.io/NaNTracker.jl/dev/) for details on custom layers, how it works, and advanced usage.
