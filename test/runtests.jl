@@ -305,4 +305,148 @@ using Functors: KeyPath
         @test isfinite(loss)
     end
 
+    # ─── Stats tracking tests ────────────────────────────────────────────────
+
+    @testset "stats disabled by default" begin
+        entries = recent_stats()
+        @test isempty(entries)
+    end
+
+    @testset "tensor statistics" begin
+        x = Float32[3.0, 4.0]
+        @test NaNTracker.tensor_norm(x) ≈ 5.0
+        @test NaNTracker.tensor_maxabs(x) ≈ 4.0
+        @test NaNTracker.tensor_has_inf(x) == false
+
+        @test NaNTracker.tensor_norm(Float32[]) == 0.0
+        @test NaNTracker.tensor_maxabs(Float32[]) == 0.0
+
+        @test NaNTracker.tensor_norm(3.0) ≈ 3.0
+        @test NaNTracker.tensor_maxabs(-5.0) ≈ 5.0
+
+        @test NaNTracker.tensor_has_inf(Float32[1.0, Inf]) == true
+        @test NaNTracker.tensor_has_inf(Inf) == true
+        @test NaNTracker.tensor_has_inf("string") == false
+
+        # Tuples
+        @test NaNTracker.tensor_norm((Float32[3.0], Float32[4.0])) ≈ 5.0
+        @test NaNTracker.tensor_maxabs((Float32[1.0], Float32[7.0])) ≈ 7.0
+        @test NaNTracker.tensor_has_inf((Float32[1.0], Float32[Inf])) == true
+    end
+
+    @testset "enable, record, query, disable" begin
+        disable_stats!()  # ensure clean state
+
+        enable_stats!(capacity=10)
+        model = Chain(Dense(4 => 8, relu), Dense(8 => 2))
+        tracked = nantrack(model)
+        x = randn(Float32, 4, 3)
+        _ = tracked(x)
+
+        entries = recent_stats()
+        @test length(entries) > 0
+        @test all(e -> e.norm >= 0.0, entries)
+        @test all(e -> e.maxabs >= 0.0, entries)
+        @test all(e -> !e.has_nan, entries)
+
+        # Filter by path
+        all_entries = recent_stats(n=100)
+        filtered = recent_stats(path_contains="layers")
+        @test length(filtered) <= length(all_entries)
+
+        # Clear keeps stats enabled
+        clear_stats!()
+        @test isempty(recent_stats())
+
+        # Forward again produces new entries
+        _ = tracked(x)
+        @test length(recent_stats()) > 0
+
+        # Disable clears and stops recording
+        disable_stats!()
+        @test isempty(recent_stats())
+
+        # After disable, forward produces no entries
+        _ = tracked(x)
+        @test isempty(recent_stats())
+    end
+
+    @testset "ring buffer wraps" begin
+        enable_stats!(capacity=3)
+        model = Chain(Dense(2 => 2))
+        tracked = nantrack(model)
+        x = randn(Float32, 2, 1)
+
+        # Each forward records 2 entries (forward input + forward output)
+        # 3 forwards = 6 entries, capacity 3 → only last 3 kept
+        _ = tracked(x)
+        _ = tracked(x)
+        _ = tracked(x)
+
+        entries = recent_stats(n=100)
+        @test length(entries) == 3
+
+        disable_stats!()
+    end
+
+    @testset "stats with gradient" begin
+        enable_stats!(capacity=100)
+        model = Chain(Dense(4 => 2))
+        tracked = nantrack(model)
+        x = randn(Float32, 4, 3)
+
+        loss, grads = Flux.withgradient(tracked) do m
+            sum(m(x))
+        end
+
+        entries = recent_stats()
+        @test length(entries) > 0
+
+        # Should have gradient entries (∇ prefix in label)
+        grad_entries = filter(e -> startswith(e.label, "∇"), entries)
+        @test length(grad_entries) > 0
+
+        disable_stats!()
+    end
+
+    @testset "stats context on NaN detection" begin
+        enable_stats!(capacity=50)
+        layer = Dense(2 => 2)
+        layer.weight .= NaN
+        checked = NaNCheck(KeyPath(:nan_layer), layer)
+
+        # Should throw DomainError; stats context is emitted via @error
+        @test_throws DomainError checked(Float32[1.0, 2.0])
+
+        disable_stats!()
+    end
+
+    @testset "dump_stats output" begin
+        # Disabled: mentions disabled
+        disable_stats!()
+        io = IOBuffer()
+        dump_stats(io=io)
+        output = String(take!(io))
+        @test occursin("disabled", output)
+
+        # Enabled but empty: mentions no stats
+        enable_stats!(capacity=10)
+        io = IOBuffer()
+        dump_stats(io=io)
+        output = String(take!(io))
+        @test occursin("No stats", output)
+
+        # After forward: shows entries
+        model = Chain(Dense(2 => 2))
+        tracked = nantrack(model)
+        _ = tracked(randn(Float32, 2, 1))
+        io = IOBuffer()
+        dump_stats(io=io)
+        output = String(take!(io))
+        @test occursin("norm=", output)
+        @test occursin("maxabs=", output)
+
+        disable_stats!()
+    end
+
 end

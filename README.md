@@ -27,3 +27,17 @@ end
 # Unwrap when done debugging
 clean = nanuntrack(tracked)
 ```
+
+## Diagnosing gradient explosions
+
+Enable stats tracking to record norm and maxabs at every checked layer:
+
+```julia
+enable_stats!()
+# ... training step ...
+dump_stats(path_contains="attention")  # show only attention layers
+clear_stats!()                          # reset for next step
+disable_stats!()                        # zero overhead when off
+```
+
+When a NaN is detected with stats enabled, the recent trajectory is printed automatically.

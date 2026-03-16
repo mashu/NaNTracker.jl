@@ -1,4 +1,4 @@
-# NaNTracker example: wrap a model and use it. No fmap_with_path or custom exclude.
+# NaNTracker example: wrap a model, use stats tracking.
 include("NaNTracker.jl")
 using .NaNTracker
 using Flux
@@ -15,5 +15,15 @@ y = tracked(x)   # same API as model(x)
 #    NaNTracker.trackable(::KeyPath, ::Onion.Linear) = true
 #    NaNTracker.trackable(::KeyPath, ::Onion.RMSNorm) = true
 
-# 3. Strip wrappers to get the original back.
+# 3. Stats tracking: enable before a training step to diagnose explosions.
+enable_stats!()
+loss, grads = Flux.withgradient(tracked) do m
+    sum(m(x))
+end
+dump_stats()                          # show all recent entries
+dump_stats(path_contains="layers")    # filter by path substring
+clear_stats!()                        # reset for next step
+disable_stats!()                      # turn off when done debugging
+
+# 4. Strip wrappers to get the original back.
 restored = nanuntrack(tracked)

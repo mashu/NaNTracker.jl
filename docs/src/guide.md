@@ -84,3 +84,29 @@ transparently with CUDA arrays:
 using CUDA
 gpu_model = nantrack(model) |> gpu
 ```
+
+## Stats tracking
+
+When a NaN is detected, `DomainError` tells you *which* layer but not
+*how* values grew. Enable stats tracking to record norm and maxabs at
+every checked layer — both forward and backward:
+
+```julia
+enable_stats!()          # ring buffer of 1000 entries (default)
+
+loss, grads = Flux.withgradient(tracked) do m
+    sum(m(x))
+end
+
+# Inspect magnitudes (filter to specific layers)
+dump_stats(path_contains="attention")
+clear_stats!()           # reset for next step
+disable_stats!()         # turn off when done (zero overhead)
+```
+
+When a NaN is detected with stats enabled, the recent trajectory is
+dumped to stderr *before* the `DomainError` is thrown — showing the
+explosion path leading up to the failure.
+
+**Note:** On GPU, stats recording triggers scalar transfers (sync points)
+at every checked layer. Use for debugging only.
